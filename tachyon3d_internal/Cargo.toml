@@ -1,0 +1,21 @@
+[package]
+name = "tachyon3d_internal"
+version = "0.2.23"
+edition = "2024"
+
+
+
+[features]
+# 1. Define your custom feature
+hyper_fiber = ["dep:corosensei", "dep:crossbeam-deque"]
+default = ["hyper_fiber"]
+
+
+[dependencies]
+fxhash = "*"
+corosensei = { version = "*", optional = true }
+crossbeam-deque = { version = "*", optional = true }
+tachyon3d_proc_macros = { path = "../tachyon3d_proc_macros" }
+slotmap = "1.1.1"
+rand = "0.10.2"
+

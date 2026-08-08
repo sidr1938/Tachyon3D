@@ -1,9 +1,28 @@
 [package]
 name = "tachyon3d"
-version = "0.2.13"
+version = "0.4.23"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 description = "A work in progress engine"
 
 [dependencies]
-fxhash = "0.2.1"
+tachyon3d_internal = { path = "tachyon3d_internal" }
+tachyon3d_proc_macros = { path = "tachyon3d_proc_macros" }
+tachyon3d_dylib = { path = "tachyon3d_dylib", optional = true }
+slotmap = "1.1.1"
+
+[features]
+default = []
+dynamic_linking = ["dep:tachyon3d_dylib"]
+
+[workspace]
+members = ["tachyon3d_dylib","tachyon3d_internal","tachyon3d_proc_macros"]
+
+resolver = "3"
+
+[dev-dependencies]
+criterion = { version = "*", features = ["html_reports"] }
+
+[[bench]]
+name = "scheduler_bench"
+harness = false

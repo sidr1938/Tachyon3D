@@ -1,2 +1,2 @@
 # Tachyon3D
-A general development api
+A modular 3D development api
