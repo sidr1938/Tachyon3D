@@ -22,7 +22,7 @@ impl SingleThreadedExecutor {
         if let Some(root) = &schedule.dep_graph.root {
             // Go through its assoicate nodes, reversing is optional, just makes unordered execution
             // happen forward in a single threaded basic executor if you want
-            for i in schedule.dep_graph.edges.get(&root).unwrap().associates.iter().rev() {
+            for i in schedule.dep_graph.edges.get(&root).expect("EXECUTOR: root node is missing from the dependency graph").associates.iter().rev() {
                 queue.push(i)
             }
             // Push the root up now
@@ -31,7 +31,7 @@ impl SingleThreadedExecutor {
         // Keep looping while the queue has items
         while let Some(key) = queue.pop() {
             // Get the system entry (a system with metadata) in the slotmap via the key
-            let sys = schedule.systems.get_mut(*key).unwrap();
+            let sys = schedule.systems.get_mut(*key).expect("EXECUTOR: queued system is missing from the schedule");
             // A system will typically have arguements, get_disjoint_unchecked is a custom method
             // that handles it for us to get the data we need to input into the system
             // Just debug testing, not needed, everything is nominal if all schedule run orderly.
@@ -61,21 +61,21 @@ impl SingleThreadedExecutor {
             // connected to the old algorithm, but technically there should only be one dependent pointer
             // at all times due to the new batching system
             // ! Check out the dot format of your schedule to see what I mean if you're confused !
-            let next_node = schedule.dep_graph.edges.get(key).unwrap().dependents.iter();
+            let next_node = schedule.dep_graph.edges.get(key).expect("EXECUTOR: queued system is missing from the dependency graph").dependents.iter();
             for i in next_node {
                 // The dependent (Eg: the next trigger node with its associates), will have
                 // a max gate that if the atomic count equals it that means all dependencies have ran.
                 // The other way would be where the dependent checks if the dependencies are finished,
                 // that would require polling and is much slower and unreliable
-                let max = schedule.systems.get(*i).unwrap().dependency_count;
-                let count = &mut schedule.systems.get_mut(*i).unwrap().dependency_gate;
+                let max = schedule.systems.get(*i).expect("EXECUTOR: dependent system is missing from the schedule").dependency_count;
+                let count = &mut schedule.systems.get_mut(*i).expect("EXECUTOR: dependent system is missing from the schedule").dependency_gate;
                 // Add to the atomic count
                 let current = count.fetch_add(1, Ordering::Relaxed);
                 // Once the last node finishes (can be the root aswell) within the parallel block
                 // the gate is unlocked and the node pushes the next task upto the queue
                 if current + 1 == max {
                     // Push all of its associates, if any
-                    for k in schedule.dep_graph.edges.get(i).unwrap().associates.iter().rev() {
+                    for k in schedule.dep_graph.edges.get(i).expect("EXECUTOR: dependent system is missing from the dependency graph").associates.iter().rev() {
                         queue.push(k);
                     }
                     queue.push(i);

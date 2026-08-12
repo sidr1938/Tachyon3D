@@ -120,7 +120,8 @@ mod tests {
         let dot = app.schedules.get_mut(BasicLoop).unwrap().edges_to_dot();
         std::fs::write("graph.dot", dot).unwrap();
 
-        app.schedules.get_mut(BasicLoop).unwrap().cache_pointers(&mut app.resources);
+        app.schedules.get_mut(BasicLoop).unwrap().cache_pointers(&mut app.resources)
+            .expect("every system argument should resolve to a registered resource");
         for _ in 0..3 {
             app.schedules.get_mut(BasicLoop).unwrap().run(&mut app.resources);
             //std::thread::sleep(std::time::Duration::from_millis(100));

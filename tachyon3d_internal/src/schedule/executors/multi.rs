@@ -24,18 +24,26 @@ impl MultiThreadedExecutor {
         let schedule_ptr = SendPointer::new(&schedule.dep_graph);
         let resource_ptr = SendPointer::new_mut(resources);
 
-        let workgroup = resources.get_mut::<WorkgroupHandler>().unwrap().workgroups.get_mut(&self.workgroup).unwrap();
-        let root = schedule.dep_graph.root.unwrap();
+        let workgroup_handler = resources.get_mut::<WorkgroupHandler>().expect(
+            "EXECUTOR: the multi threaded executor needs a WorkgroupHandler, install it with app.install(WorkgroupHandler::new())"
+        );
+        let workgroup = workgroup_handler.workgroups.get_mut(&self.workgroup).expect(
+            "EXECUTOR: the workgroup this schedule executes on was never created, add it with add_workgroup before running the schedule"
+        );
+        // No root means no plan was built yet, same as the single threaded executor there is
+        // nothing to dispatch, so bail out before touching the task counter
+        let Some(root) = schedule.dep_graph.root else {
+            return;
+        };
         // Pointer for the queue, needs access to workgroup which is in resources so we make the pointer for this after
         // to avoid two mutable borrows at the same time
         let queue_ptr = SendPointer::new(&workgroup.injector);
         dispatch_system(queue_ptr, system_ptr, schedule_ptr, resource_ptr, root);
-        for associate in schedule.dep_graph.edges.get(&root).unwrap().associates.iter() {
+        for associate in schedule.dep_graph.edges.get(&root).expect("EXECUTOR: root node is missing from the dependency graph").associates.iter() {
             dispatch_system(queue_ptr, system_ptr, schedule_ptr, resource_ptr, *associate);
         }
 
         // Ready the threads
-        dbg!["UNPARKING"];
         let mut threads = 0;
 
         workgroup.tasks.fetch_add(schedule.systems.len(), Ordering::Release);
@@ -67,19 +75,19 @@ fn dispatch_system(queue_ptr: SendPointer<Arc<Injector<Task>>>, systems_ptr: Sen
             let systems = systems_ptr.as_mut();
             let dep_graph = dep_graph_ptr.as_ref();
 
-            let entry = systems.get_mut(node).unwrap();
+            let entry = systems.get_mut(node).expect("EXECUTOR: dispatched system is missing from the schedule");
             if let Some(cache) = entry.cache.as_ref() {
                 (entry.system)(cache);
             } else {
                 let data = resources_ptr.as_mut().internal.fetch_args_unchecked(&entry.ptrs);
                 (entry.system)(&data);
             }
-            for dependent_node in dep_graph.edges.get(&node).unwrap().dependents.iter() {
-                let max = systems.get(*dependent_node).unwrap().dependency_count;
-                let count = &mut systems.get_mut(*dependent_node).unwrap().dependency_gate;
+            for dependent_node in dep_graph.edges.get(&node).expect("EXECUTOR: dispatched system is missing from the dependency graph").dependents.iter() {
+                let max = systems.get(*dependent_node).expect("EXECUTOR: dependent system is missing from the schedule").dependency_count;
+                let count = &mut systems.get_mut(*dependent_node).expect("EXECUTOR: dependent system is missing from the schedule").dependency_gate;
                 let prev = count.fetch_add(1, Ordering::Acquire);
                 if prev + 1 == max {
-                    for dep_associated_node in dep_graph.edges.get(dependent_node).unwrap().associates.iter().rev() {
+                    for dep_associated_node in dep_graph.edges.get(dependent_node).expect("EXECUTOR: dependent system is missing from the dependency graph").associates.iter().rev() {
                         dispatch_system(queue_ptr, systems_ptr, dep_graph_ptr, resources_ptr, *dep_associated_node);
                     }
                     dispatch_system(queue_ptr, systems_ptr, dep_graph_ptr, resources_ptr, *dependent_node);

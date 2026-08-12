@@ -1,10 +1,11 @@
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
 use std::ops::DerefMut;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use fxhash::FxHashMap;
-use slotmap::{DenseSlotMap, new_key_type};
+use slotmap::DenseSlotMap;
 use crate::{ResourceHandler};
-use crate::resources::fetch::DisjointedAccess;
+use crate::resources::fetch::{DisjointedAccess, FetchError};
 use crate::schedule::executors::Executor;
 
 use crate::schedule::graph::{DependencyGraph, SystemKey};
@@ -46,25 +47,36 @@ impl Schedule {
         }
     }
     pub fn run(&mut self, resources: &mut ResourceHandler) {
+        // The executor is moved out so it can be driven while it mutates the schedule,
+        // so a panicking system would otherwise leave the schedule executor-less and every
+        // later run would report "no executor" instead of the real failure
         let mut exec = self.executor.take();
-        match exec.as_mut().expect("SCHEDULE: Called run on schedule with no executor") {
-            Executor::SingleThreaded(single_threaded_executor) => {
-                single_threaded_executor.execute(self, resources);
-            },
-            Executor::MultiThreaded(multi_threaded_executor) => {
-                multi_threaded_executor.execute(self, resources);
-            },
-            Executor::Custom(executor) => {
-                executor.deref_mut().execute(self, resources);
-            },
-        }
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            match exec.as_mut().expect("SCHEDULE: Called run on schedule with no executor") {
+                Executor::SingleThreaded(single_threaded_executor) => {
+                    single_threaded_executor.execute(self, resources);
+                },
+                Executor::MultiThreaded(multi_threaded_executor) => {
+                    multi_threaded_executor.execute(self, resources);
+                },
+                Executor::Custom(executor) => {
+                    executor.deref_mut().execute(self, resources);
+                },
+            }
+        }));
         self.executor = exec;
+        if let Err(payload) = result {
+            resume_unwind(payload);
+        }
     }
-    pub fn cache_pointers(&mut self, resources: &mut ResourceHandler) {
-        for (key, entry) in self.systems.iter_mut() {
-            let data = resources.internal.fetch_args_unchecked(&entry.ptrs);
+    // Validates every system's arguments while caching them, so an aliased or missing
+    // resource is reported here instead of turning into a dangling pointer at run time
+    pub fn cache_pointers(&mut self, resources: &mut ResourceHandler) -> Result<&mut Self, FetchError> {
+        for (_, entry) in self.systems.iter_mut() {
+            let data = resources.internal.fetch_args(&entry.ptrs)?;
             entry.cache = Some(data);
         }
+        Ok(self)
     }
     pub fn add_systems<U>(&mut self, systems: impl Destructure<U>) -> &mut Self {
         let mut current_trigger = self.dep_graph.root;

@@ -41,13 +41,17 @@ impl<F> Destructure<()> for F where F: FnMut() + 'static + Send + Sync {
         // should make a register function for this
         current_rank.push(key);
         if let Some(current_trigger_node) = current_trigger_node {
-            schedule.dep_graph.edges.get_mut(&current_trigger_node).unwrap().associates.push(key);
+            schedule.dep_graph.edges.get_mut(&current_trigger_node)
+                .expect("SCHEDULE: trigger node is missing from the dependency graph")
+                .associates.push(key);
         } else {
             if schedule.dep_graph.root.is_none() {
                 schedule.dep_graph.root = Some(key);
             }
             for i in last_rank.iter() {
-                schedule.dep_graph.edges.get_mut(i).unwrap().dependents.push(key);
+                schedule.dep_graph.edges.get_mut(i)
+                    .expect("SCHEDULE: node from the previous rank is missing from the dependency graph")
+                    .dependents.push(key);
             }
             *current_trigger_node = Some(key)
         }
