@@ -6,9 +6,9 @@ license = "Apache-2.0"
 description = "A work in progress engine"
 
 [dependencies]
-tachyon3d_internal = { path = "tachyon3d_internal" }
-tachyon3d_macros = { path = "tachyon3d_macros" }
-tachyon3d_dylib = { path = "tachyon3d_dylib", optional = true }
+tachyon3d_internal = { version = "0.0.1-alpha.1", path = "tachyon3d_internal" }
+tachyon3d_macros = { version = "0.0.1-alpha.1", path = "tachyon3d_macros" }
+tachyon3d_dylib = { version = "0.0.1-alpha.1", path = "tachyon3d_dylib", optional = true }
 slotmap = "1.1.1"
 
 [features]

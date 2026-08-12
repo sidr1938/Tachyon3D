@@ -6,9 +6,9 @@
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/tachyon3d_dylib/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/tachyon3d_internal/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/tachyon3d_proc_macros/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/benches" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/tachyon3d_macros/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
