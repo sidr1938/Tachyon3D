@@ -1,4 +1,3 @@
-use std::any::TypeId;
 use crate::app::AppT3D;
 
 
@@ -8,7 +7,7 @@ pub trait RunAsOwned {
 }
 pub trait Plugin where Self: 'static {
     fn build(self, app: &mut AppT3D) where Self: Sized {
-        app.resources.internal.insert(TypeId::of::<Self>(), Box::new(self));
+        app.resources.insert(self);
     }
 }
 
@@ -23,7 +22,7 @@ pub trait Installation where Self: 'static {
     fn install_plugin(self, app: &mut AppT3D) where Self: Sized {
         let mut installation = self.build(app);
         installation.build_ref(app);
-        app.resources.internal.insert(TypeId::of::<Self>(), Box::new(installation));
+        app.resources.insert(installation);
     }
 }
 

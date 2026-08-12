@@ -63,7 +63,7 @@ impl Extensions for AppT3D {
     }
 }
 
-enum WorkerStatus {
+pub enum WorkerStatus {
     Ready = 0,
     Working = 1,
     Shutdown = 2,
@@ -129,20 +129,34 @@ impl WorkgroupHandler {
 thread_local! {
 
 }
+// Runs a task and marks it off of the workgroups outstanding task count
+fn run_task(task: Task, tasks: &AtomicUsize) {
+    task.0();
+    tasks.fetch_sub(1, Ordering::Relaxed);
+}
+// Handles the outcome of a steal attempt, running the task it popped if there was one,
+// returns whether the worker should restart its search rather than fall through to the next source
+fn run_stolen(stolen: Steal<Task>, tasks: &AtomicUsize) -> bool {
+    match stolen {
+        Steal::Success(task) => {
+            run_task(task, tasks);
+            true
+        },
+        Steal::Retry => true,
+        Steal::Empty => false,
+    }
+}
 fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<Vec<Stealer<Task>>>, statuses: Arc<[AtomicU8]>, shutdown: Arc<AtomicBool>, tasks: Arc<AtomicUsize>, main_thread: std::thread::Thread, id: usize, group: usize) {
     loop {
-        statuses[id].store(1, Ordering::Relaxed);
+        statuses[id].store(WorkerStatus::Working as u8, Ordering::Relaxed);
         loop {
             //io::stdout().flush().unwrap();
-            match worker.pop() {
-                Some(task) => { task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; },
-                None => {}
+            if let Some(task) = worker.pop() {
+                run_task(task, &tasks);
+                continue;
             }
-            match queue.steal_batch_with_limit_and_pop(&worker, max(1, queue.len() / 2)) {
-                Steal::Success(task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; }
-                Steal::Retry => { continue; }
-                Steal::Empty => {}
+            if run_stolen(queue.steal_batch_with_limit_and_pop(&worker, max(1, queue.len() / 2)), &tasks) {
+                continue;
             }
             // Finding victims
             let mut idx = rand::random_range(0..(stealers.len()));
@@ -153,24 +167,20 @@ fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<
                 idx += 1;
             }
             let victim = &stealers[idx % stealers.len()];
-            match victim.steal_batch_with_limit_and_pop(&worker, max(1, victim.len() / 2)) {
-                Steal::Success( task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; dbg!["STEAL"];
-                },
-                Steal::Retry => { continue; },
-                Steal::Empty => {},
+            if run_stolen(victim.steal_batch_with_limit_and_pop(&worker, max(1, victim.len() / 2)), &tasks) {
+                continue;
             }
             break;
         }
         if tasks.load(Ordering::Acquire) == 0 {
             if shutdown.load(Ordering::Relaxed) {
                 //println!("GROUP {group} THREAD {id} SHUTDOWN");
-                statuses[id].store(2, Ordering::Relaxed);
+                statuses[id].store(WorkerStatus::Shutdown as u8, Ordering::Relaxed);
                 //io::stdout().flush().unwrap();
                 break;
             }
             //println!("GROUP {group} THREAD {id} PARKED");
-            statuses[id].store(0, Ordering::Relaxed);
+            statuses[id].store(WorkerStatus::Ready as u8, Ordering::Relaxed);
             main_thread.unpark();
             thread::park();
         }

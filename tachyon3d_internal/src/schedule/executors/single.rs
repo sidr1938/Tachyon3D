@@ -1,7 +1,5 @@
 use std::ptr::addr_eq;
-use std::sync::atomic::{AtomicU32, Ordering};
 use crate::{ResourceHandler};
-use crate::resources::fetch::DisjointedAccess;
 use crate::schedule::Schedule;
 
 pub struct SingleThreadedExecutor;
@@ -47,16 +45,12 @@ impl SingleThreadedExecutor {
             // Deref it mutably so it can modify the state of our application
             // We already built a cache, however if we want to add schedule and dont want to build a cache
             // for those we need to add this branch to check for those that dont have a cache installed yet
-            if let Some(cache) = sys.cache.as_ref() {
-                (sys.system)(cache);
-            } else {
-                // Added a cache builder that pre-runs this code, so we can avoid this entirely
-                // the cache works well if that resource isnt deleted or replaced, which is like 80% of cases
-                // if not, you have to rebuild the entire cache, later on ill improve this to only rebuild whats needed
-                // that way caches only have to be rebuilt for schedule that have a resource that changed
-                let data = resources.internal.fetch_args_unchecked(&sys.ptrs);
-                (sys.system)(&data);
-            }
+            // The entry runs off of its cache when there is one, a cache builder pre-runs the
+            // argument fetching so most runs avoid it entirely
+            // the cache works well if that resource isnt deleted or replaced, which is like 80% of cases
+            // if not, you have to rebuild the entire cache, later on ill improve this to only rebuild whats needed
+            // that way caches only have to be rebuilt for schedule that have a resource that changed
+            sys.run(resources);
             // Will review over this being a vector of default keys since this section is sort of
             // connected to the old algorithm, but technically there should only be one dependent pointer
             // at all times due to the new batching system
@@ -67,21 +61,14 @@ impl SingleThreadedExecutor {
                 // a max gate that if the atomic count equals it that means all dependencies have ran.
                 // The other way would be where the dependent checks if the dependencies are finished,
                 // that would require polling and is much slower and unreliable
-                let max = schedule.systems.get(*i).unwrap().dependency_count;
-                let count = &mut schedule.systems.get_mut(*i).unwrap().dependency_gate;
-                // Add to the atomic count
-                let current = count.fetch_add(1, Ordering::Relaxed);
                 // Once the last node finishes (can be the root aswell) within the parallel block
                 // the gate is unlocked and the node pushes the next task upto the queue
-                if current + 1 == max {
+                if schedule.systems.get(*i).unwrap().dependency_arrived() {
                     // Push all of its associates, if any
                     for k in schedule.dep_graph.edges.get(i).unwrap().associates.iter().rev() {
                         queue.push(k);
                     }
                     queue.push(i);
-                    // Reset for the next run, doesnt affect execution since were done with
-                    // the atomic count
-                    *count = AtomicU32::new(0);
                 }
             }
         }

@@ -24,12 +24,8 @@ pub struct AppT3D {
 impl AppT3D {
     pub fn new() -> Self {
         Self {
-            schedules: ScheduleHandler {
-                internal: FxHashMap::default(),
-            },
-            resources: ResourceHandler {
-                internal: FxHashMap::default(),
-            },
+            schedules: ScheduleHandler::new(),
+            resources: ResourceHandler::new(),
         }
     }
     // Not really a full 'ecs' system and not sure if i want to go with an integrated ecs
@@ -53,7 +49,7 @@ impl AppT3D {
     }
     // Convenience method
     pub fn add_resource<T: Any + Send + Sync>(&mut self, resource: T) -> &mut Self {
-        self.resources.internal.insert(TypeId::of::<T>(), Box::new(resource));
+        self.resources.insert(resource);
         self
     }
     // Kind of a convenience method
