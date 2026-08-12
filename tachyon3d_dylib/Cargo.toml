@@ -7,4 +7,4 @@ edition = "2024"
 crate-type = ["dylib"]
 
 [dependencies]
-tachyon3d_internal = { path = "../tachyon3d_internal" }
+tachyon3d_internal = { version = "0.0.1-alpha.1", path = "../tachyon3d_internal" }
