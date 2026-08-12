@@ -56,7 +56,8 @@ impl MultiThreadedExecutor {
                 break;
             }
             if let Some(worker) = worker {
-                if workgroup.statuses[idx].load(Ordering::Acquire) == 0 {
+                // Ready, or asleep because it ran out of reachable work during the last frame
+                if matches!(workgroup.statuses[idx].load(Ordering::Acquire), 0 | 3) {
                     worker.thread().unpark();
                     threads += 1;
                 }
