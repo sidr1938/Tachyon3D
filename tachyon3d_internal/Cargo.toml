@@ -11,7 +11,7 @@ description = "internal for tachyon3d"
 [dependencies]
 fxhash = "0.2.1"
 corosensei = { version = "0.3.4", optional = true }
-crossbeam-deque = { version = "*" }
+crossbeam-deque = { version = "0.8.7" }
 tachyon3d_macros = { version = "0.0.1-alpha.1", path = "../tachyon3d_macros" }
 slotmap = "1.1.1"
 rand = "0.10.2"
