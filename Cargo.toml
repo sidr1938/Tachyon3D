@@ -1,13 +1,13 @@
 [package]
 name = "tachyon3d"
-version = "0.0.1"
+version = "0.0.1-alpha.1"
 edition = "2024"
 license = "Apache-2.0"
 description = "A work in progress engine"
 
 [dependencies]
 tachyon3d_internal = { path = "tachyon3d_internal" }
-tachyon3d_proc_macros = { path = "tachyon3d_proc_macros" }
+tachyon3d_macros = { path = "tachyon3d_macros" }
 tachyon3d_dylib = { path = "tachyon3d_dylib", optional = true }
 slotmap = "1.1.1"
 
@@ -16,7 +16,7 @@ default = []
 dynamic_linking = ["dep:tachyon3d_dylib"]
 
 [workspace]
-members = ["tachyon3d_dylib","tachyon3d_internal","tachyon3d_proc_macros"]
+members = ["tachyon3d_dylib","tachyon3d_internal", "tachyon3d_macros"]
 
 resolver = "3"
 

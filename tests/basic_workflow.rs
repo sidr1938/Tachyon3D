@@ -11,7 +11,7 @@ mod tests {
     use tachyon3d_internal::schedule::executors::multi::MultiThreadedExecutor;
     use tachyon3d_internal::systems::variadics::SystemMethods;
     use tachyon3d_internal::workgroups::{Extensions, Strategy, WorkgroupHandler};
-    use tachyon3d_proc_macros::Resource;
+    use tachyon3d_macros::Resource;
 
     #[test]
     fn test() {

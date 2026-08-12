@@ -593,37 +593,37 @@ dependencies = [
 
 [[package]]
 name = "tachyon3d"
-version = "0.0.1"
+version = "0.0.1-alpha.1"
 dependencies = [
  "criterion",
  "slotmap",
  "tachyon3d_dylib",
  "tachyon3d_internal",
- "tachyon3d_proc_macros",
+ "tachyon3d_macros",
 ]
 
 [[package]]
 name = "tachyon3d_dylib"
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 dependencies = [
  "tachyon3d_internal",
 ]
 
 [[package]]
 name = "tachyon3d_internal"
-version = "0.0.1"
+version = "0.0.1-alpha.1"
 dependencies = [
  "corosensei",
  "crossbeam-deque",
  "fxhash",
  "rand",
  "slotmap",
- "tachyon3d_proc_macros",
+ "tachyon3d_macros",
 ]
 
 [[package]]
-name = "tachyon3d_proc_macros"
-version = "0.1.0"
+name = "tachyon3d_macros"
+version = "0.0.1-alpha.1"
 
 [[package]]
 name = "tinytemplate"
