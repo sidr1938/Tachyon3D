@@ -15,24 +15,34 @@ pub fn derive_resource(input: TokenStream) -> TokenStream {
     let mut index = 0;
     loop {
         index +=1;
-        let current = tokens.next().unwrap();
+        // Emitting nothing on unexpected input hides the cause behind an unrelated
+        // "trait is not implemented" error at every use site, so bail out loudly instead
+        let Some(current) = tokens.next() else {
+            return compile_error("Resource can only be derived on a struct");
+        };
         if let TokenTree::Ident(ident) = current  {
             if ident.to_string() == "struct" {
                 break;
             }
         }
         if index == MAX_SEARCH {
-            return TokenStream::new();
+            return compile_error("Resource can only be derived on a struct");
         }
     }
 
-    match tokens.next().unwrap() {
-        TokenTree::Ident(ident) => {
+    match tokens.next() {
+        Some(TokenTree::Ident(ident)) => {
             format!(
                 // ::tachyon3d_internal::___ gets the path to the trait
                 "impl ::tachyon3d_internal::Resource for {} {{}}", ident.to_string()
-            ).parse().unwrap()
+            ).parse().expect("derive(Resource) generated an invalid impl block")
         },
-        _ => TokenStream::new(),
+        _ => compile_error("Resource expected a struct name to implement the trait for"),
     }
+}
+
+fn compile_error(message: &str) -> TokenStream {
+    format!("::core::compile_error!({message:?});")
+        .parse()
+        .expect("derive(Resource) generated an invalid compile_error")
 }

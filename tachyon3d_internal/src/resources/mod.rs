@@ -34,10 +34,16 @@ impl ResourceHandler {
     pub fn contains_key(&mut self, key: &TypeId) -> bool {
         self.internal.contains_key(&key)
     }
+    // A failed downcast puts the resource back instead of dropping it on the floor
     pub fn remove<T: Any>(&mut self) -> Option<T> {
-        self.remove_direct(&TypeId::of::<T>())
-            .and_then(|f| f.downcast::<T>()
-                .ok().map(|r| *r))
+        let key = TypeId::of::<T>();
+        match self.remove_direct(&key)?.downcast::<T>() {
+            Ok(resource) => Some(*resource),
+            Err(resource) => {
+                self.internal.insert(key, resource);
+                None
+            }
+        }
     }
     pub fn remove_direct(&mut self, key: &TypeId) -> Option<Box<dyn Any>> {
         self.internal.remove(key)

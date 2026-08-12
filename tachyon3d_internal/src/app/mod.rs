@@ -34,12 +34,25 @@ impl AppT3D {
     }
     // Not really a full 'ecs' system and not sure if i want to go with an integrated ecs
     pub fn add_systems<T: 'static, U>(&mut self, schedule: T, systems: impl Destructure<U>) -> &mut Self {
-        let scheduler = self.schedules.internal.get_mut(&schedule.type_id()).expect("No schedular exists");
+        let scheduler = self.schedules.internal.get_mut(&schedule.type_id()).unwrap_or_else(|| panic!(
+            "APP: no schedule labelled `{}` exists, add it with add_schedule before adding systems to it",
+            std::any::type_name::<T>()
+        ));
         scheduler.add_systems(systems);
         self
     }
     pub fn add_schedule<T: 'static>(&mut self, label: T, executor: Executor) -> &mut Self {
-        self.schedules.internal.insert(label.type_id(), Schedule::new(Some(executor)));
+        let replaced = self.schedules.internal.insert(label.type_id(), Schedule::new(Some(executor)));
+        // Replacing an empty schedule only swaps the executor, but replacing a populated one
+        // would silently throw away every system already registered on it
+        if let Some(replaced) = replaced {
+            assert!(
+                replaced.systems.is_empty(),
+                "APP: a schedule labelled `{}` with {} system(s) already exists, replacing it would discard them",
+                std::any::type_name::<T>(),
+                replaced.systems.len()
+            );
+        }
         self
     }
     // External functionality just like how bevy does it
@@ -58,7 +71,11 @@ impl AppT3D {
     }
     // Kind of a convenience method
     pub fn run_owned<R: RunAsOwned + Any>(mut self) {
-        self.resources.remove::<R>().unwrap().runtime(self);
+        let runner = self.resources.remove::<R>().unwrap_or_else(|| panic!(
+            "APP: `{}` is not a registered resource, install it before calling run_owned",
+            std::any::type_name::<R>()
+        ));
+        runner.runtime(self);
     }
 }
 

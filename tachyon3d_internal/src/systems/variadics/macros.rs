@@ -89,7 +89,10 @@ macro_rules! parse_tuple_current_rank {
                         system: Box::new(move | mut pointers: &[SendSyncNonNull] | {
                             let mut arg = pointers.iter().copied();
                             self(
-                                $(<$y as InnerAccess>::fetch_data(arg.next().expect("Missing Arguement").non_null)),*
+                                $(<$y as InnerAccess>::fetch_data(arg.next().unwrap_or_else(|| panic!(
+                                    "SYSTEM: no pointer was fetched for the `{}` argument, the cached pointers do not match the system signature",
+                                    std::any::type_name::<$y>()
+                                )).non_null)),*
                             );
                         }),
                         ptrs,
@@ -103,13 +106,17 @@ macro_rules! parse_tuple_current_rank {
                 );
                 current_rank.push(key);
                 if let Some(current_trigger_node) = current_trigger_node {
-                    schedule.dep_graph.edges.get_mut(&current_trigger_node).unwrap().associates.push(key);
+                    schedule.dep_graph.edges.get_mut(&current_trigger_node)
+                        .expect("SCHEDULE: trigger node is missing from the dependency graph")
+                        .associates.push(key);
                 } else {
                     if schedule.dep_graph.root.is_none() {
                         schedule.dep_graph.root = Some(key);
                     }
                     for i in last_rank.iter() {
-                        schedule.dep_graph.edges.get_mut(i).unwrap().dependents.push(key);
+                        schedule.dep_graph.edges.get_mut(i)
+                            .expect("SCHEDULE: node from the previous rank is missing from the dependency graph")
+                            .dependents.push(key);
                     }
                     *current_trigger_node = Some(key)
                 }
