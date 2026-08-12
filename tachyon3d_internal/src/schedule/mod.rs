@@ -7,7 +7,7 @@ use crate::{ResourceHandler};
 use crate::resources::fetch::DisjointedAccess;
 use crate::schedule::executors::Executor;
 
-use crate::schedule::graph::{DependencyGraph, SystemKey};
+use crate::schedule::graph::{DependencyGraph, NodeConnections, SystemKey};
 use crate::systems::entry::SystemEntry;
 use crate::systems::variadics::Destructure;
 
@@ -20,6 +20,11 @@ pub struct ScheduleHandler {
 }
 
 impl ScheduleHandler {
+    pub fn new() -> Self {
+        Self {
+            internal: Default::default(),
+        }
+    }
     pub fn get<T: 'static>(&self, label: T) -> Option<&Schedule> {
         self.internal.get(&label.type_id()).and_then(|f| Some(f))
     }
@@ -66,6 +71,31 @@ impl Schedule {
             entry.cache = Some(data);
         }
     }
+    // Inserts an entry into the slotmap and wires it into the dependency graph, either as an
+    // associate of the current trigger node or as a new trigger node depending on the previous rank
+    pub fn register_system(
+        &mut self,
+        entry: SystemEntry,
+        last_rank: &[SystemKey],
+        current_rank: &mut Vec<SystemKey>,
+        current_trigger_node: &mut Option<SystemKey>,
+    ) -> SystemKey {
+        let key = self.systems.insert(entry);
+        current_rank.push(key);
+        if let Some(trigger_node) = current_trigger_node {
+            self.dep_graph.edges.get_mut(trigger_node).unwrap().associates.push(key);
+        } else {
+            if self.dep_graph.root.is_none() {
+                self.dep_graph.root = Some(key);
+            }
+            for i in last_rank.iter() {
+                self.dep_graph.edges.get_mut(i).unwrap().dependents.push(key);
+            }
+            *current_trigger_node = Some(key)
+        }
+        self.dep_graph.edges.insert(key, NodeConnections::new(vec![], vec![]));
+        key
+    }
     pub fn add_systems<U>(&mut self, systems: impl Destructure<U>) -> &mut Self {
         let mut current_trigger = self.dep_graph.root;
         let mut curr = Vec::new();
@@ -74,6 +104,11 @@ impl Schedule {
         }
         systems.destructure(&mut Vec::new(), &mut curr, &mut current_trigger, self);
         self
+    }
+    // The user provided label if there is one, otherwise the raw key, both quoted for dot
+    fn node_label(&self, key: &SystemKey) -> String {
+        format!("{:?}", self.systems.get(*key).unwrap().label.clone()
+            .unwrap_or(format!("{:?}", key)))
     }
     pub fn edges_to_dot(&self) -> String {
         let mut dot = String::from("digraph DependencyGraph {\n");
@@ -95,17 +130,10 @@ impl Schedule {
                 continue;
             }
             if i.1.dependents.is_empty() && !last_rank_set.contains(i.0) {
-                dot.push_str(
-                    &format!("{:?}", &self.systems.get(*i.0).unwrap().label.clone()
-                        .unwrap_or(format!("{:?}", i.0)))
-                );
+                dot.push_str(&self.node_label(i.0));
             }
             for k in i.1.dependents.iter() {
-                dot.push_str(
-                    &format!("{:?} -> {:?}",
-                             &self.systems.get(*i.0).unwrap().label.clone().unwrap_or(format!("{:?}", i.0)),
-                             &self.systems.get(*k).unwrap().label.clone().unwrap_or(format!("{:?}", k)))
-                );
+                dot.push_str(&format!("{} -> {}", self.node_label(i.0), self.node_label(k)));
             }
         }
         dot.push_str("node [shape=box, style=\"rounded, dashed\", fillcolor=grey, color=grey]\n");
@@ -113,35 +141,24 @@ impl Schedule {
         for i in self.dep_graph.edges.iter() {
             if associated.contains(i.0) {
                 for k in i.1.dependents.iter() {
-                    dot.push_str(
-                        &format!("{:?} -> {:?}\n",
-                                 &self.systems.get(*i.0).unwrap().label.clone().unwrap_or(format!("{:?}", i.0)),
-                                 &self.systems.get(*k).unwrap().label.clone().unwrap_or(format!("{:?}", k)))
-                    );
+                    dot.push_str(&format!("{} -> {}\n", self.node_label(i.0), self.node_label(k)));
                 }
                 continue;
             }
             dot.push_str("{rank=same;\n");
-            dot.push_str(&format!("{:?}; ",&self.systems.get(*i.0).unwrap().label.clone().unwrap_or(format!("{:?}", i.0))));
+            dot.push_str(&format!("{}; ", self.node_label(i.0)));
             for k in i.1.associates.iter() {
                 associated.insert(k);
-                dot.push_str(
-                    &format!("{:?}; ", &self.systems.get(*k).unwrap().label.clone().unwrap_or(format!("{:?}", k)))
-                );
-                if self.dep_graph.edges.get(k).unwrap().dependents.is_empty() {
-                    dot.push_str(
-                        &format!("{:?} -> {:?} [style=invis, weight=0.25]\n",
-                                 &self.systems.get(*i.0).unwrap().label.clone().unwrap_or(format!("{:?}", i.0)),
-                                 &self.systems.get(*k).unwrap().label.clone().unwrap_or(format!("{:?}", k)))
-                    );
+                dot.push_str(&format!("{}; ", self.node_label(k)));
+                let weight = if self.dep_graph.edges.get(k).unwrap().dependents.is_empty() {
+                    0.25
                 } else {
-                    dot.push_str(
-                        &format!("{:?} -> {:?} [style=invis, weight=0.75]\n",
-                                 &self.systems.get(*i.0).unwrap().label.clone().unwrap_or(format!("{:?}", i.0)),
-                                 &self.systems.get(*k).unwrap().label.clone().unwrap_or(format!("{:?}", k)))
-                    );
-                }
-
+                    0.75
+                };
+                dot.push_str(
+                    &format!("{} -> {} [style=invis, weight={}]\n",
+                             self.node_label(i.0), self.node_label(k), weight)
+                );
             }
             dot.push_str("}\n");
         }

@@ -12,7 +12,7 @@ use crate::schedule::executors::SendPointer;
 use crate::schedule::graph::{DependencyGraph, NodeConnections, SystemKey};
 use crate::schedule::Schedule;
 use crate::systems::entry::SystemEntry;
-use crate::workgroups::{WorkgroupHandler, Workgroup, Task};
+use crate::workgroups::{WorkgroupHandler, Workgroup, Task, WorkerStatus};
 
 pub struct MultiThreadedExecutor {
     workgroup: TypeId
@@ -44,7 +44,7 @@ impl MultiThreadedExecutor {
                 break;
             }
             if let Some(worker) = worker {
-                if workgroup.statuses[idx].load(Ordering::Acquire) == 0 {
+                if workgroup.statuses[idx].load(Ordering::Acquire) == WorkerStatus::Ready as u8 {
                     worker.thread().unpark();
                     threads += 1;
                 }
@@ -67,23 +67,13 @@ fn dispatch_system(queue_ptr: SendPointer<Arc<Injector<Task>>>, systems_ptr: Sen
             let systems = systems_ptr.as_mut();
             let dep_graph = dep_graph_ptr.as_ref();
 
-            let entry = systems.get_mut(node).unwrap();
-            if let Some(cache) = entry.cache.as_ref() {
-                (entry.system)(cache);
-            } else {
-                let data = resources_ptr.as_mut().internal.fetch_args_unchecked(&entry.ptrs);
-                (entry.system)(&data);
-            }
+            systems.get_mut(node).unwrap().run(resources_ptr.as_mut());
             for dependent_node in dep_graph.edges.get(&node).unwrap().dependents.iter() {
-                let max = systems.get(*dependent_node).unwrap().dependency_count;
-                let count = &mut systems.get_mut(*dependent_node).unwrap().dependency_gate;
-                let prev = count.fetch_add(1, Ordering::Acquire);
-                if prev + 1 == max {
+                if systems.get(*dependent_node).unwrap().dependency_arrived() {
                     for dep_associated_node in dep_graph.edges.get(dependent_node).unwrap().associates.iter().rev() {
                         dispatch_system(queue_ptr, systems_ptr, dep_graph_ptr, resources_ptr, *dep_associated_node);
                     }
                     dispatch_system(queue_ptr, systems_ptr, dep_graph_ptr, resources_ptr, *dependent_node);
-                    count.store(0, Ordering::Release);
                 }
             }
         })));

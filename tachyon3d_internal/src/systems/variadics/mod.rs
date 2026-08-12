@@ -3,11 +3,10 @@ pub mod macros;
 
 use std::any::{Any, TypeId};
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicU32;
 use fxhash::{FxHashMap, FxHashSet};
 use crate::resources::access::Unwrap;
 use crate::schedule::{Schedule};
-use crate::schedule::graph::{NodeConnections, SystemKey};
+use crate::schedule::graph::SystemKey;
 use crate::systems::entry::{SendSyncNonNull, SystemEntry};
 
 pub trait Destructure<T> {
@@ -24,34 +23,17 @@ pub trait SystemMethods<T> {
 impl<F> Destructure<()> for F where F: FnMut() + 'static + Send + Sync {
     // Conversion
     fn destructure<'a>(mut self, last_rank: &mut Vec<SystemKey>, current_rank: &'a mut Vec<SystemKey>, current_trigger_node: &'a mut Option<SystemKey>, schedule: &'a mut Schedule) -> (&'a mut Schedule, &'a mut Vec<SystemKey>) {
-        let key = schedule.systems.insert(SystemEntry {
-            label: None,
-            system: Box::new(
+        let entry = SystemEntry::new(
+            Box::new(
                 move |_: &[SendSyncNonNull]| {
                     self();
                 }
             ),
-            ptrs: Vec::new(),
-            cache: None,
-            thread_safe: true,
-            dependency_gate: AtomicU32::new(0),
+            Vec::new(),
             // Associated nodes and trigger nodes will have the same dependency count
-            dependency_count: last_rank.len() as u32,
-        });
-        // should make a register function for this
-        current_rank.push(key);
-        if let Some(current_trigger_node) = current_trigger_node {
-            schedule.dep_graph.edges.get_mut(&current_trigger_node).unwrap().associates.push(key);
-        } else {
-            if schedule.dep_graph.root.is_none() {
-                schedule.dep_graph.root = Some(key);
-            }
-            for i in last_rank.iter() {
-                schedule.dep_graph.edges.get_mut(i).unwrap().dependents.push(key);
-            }
-            *current_trigger_node = Some(key)
-        }
-        schedule.dep_graph.edges.insert(key, NodeConnections::new(vec![], vec![]));
+            last_rank.len() as u32,
+        );
+        schedule.register_system(entry, last_rank, current_rank, current_trigger_node);
         (schedule, current_rank)
     }
 }
