@@ -1,4 +1,5 @@
 use std::any::{Any, TypeId};
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::{io, thread};
@@ -11,7 +12,36 @@ use crate::app::plugin::Installation;
 use crossbeam_deque;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 
-pub struct Task(pub Box<dyn FnOnce() + Send>);
+// A unit of work for a workgroup thread.
+// `Raw` carries a bare fn pointer plus an opaque context, so dispatching a system costs no
+// allocation; `Boxed` stays available for arbitrary closures.
+pub enum Task {
+    Raw {
+        call: unsafe fn(*mut (), u64),
+        ctx: *mut (),
+        payload: u64,
+    },
+    Boxed(Box<dyn FnOnce() + Send>),
+}
+
+unsafe impl Send for Task {}
+
+impl Task {
+    pub fn new(closure: impl FnOnce() + Send + 'static) -> Self {
+        Task::Boxed(Box::new(closure))
+    }
+    // Safety: `ctx` must stay valid and correctly typed for `call` until the task runs
+    pub unsafe fn raw(call: unsafe fn(*mut (), u64), ctx: *mut (), payload: u64) -> Self {
+        Task::Raw { call, ctx, payload }
+    }
+    #[inline(always)]
+    pub fn run(self) {
+        match self {
+            Task::Raw { call, ctx, payload } => unsafe { call(ctx, payload) },
+            Task::Boxed(closure) => closure(),
+        }
+    }
+}
 // T3D Default workgroup plugin
 pub enum RequestThreads {
     Fixed(usize),
@@ -30,7 +60,7 @@ impl Installation for WorkgroupHandler {}
 pub trait Extensions {
     fn add_workgroup<T: 'static>(&mut self, label: T, worker_type: Strategy, threads: usize) -> &mut Self;
     fn full_sync(&mut self) -> &mut Self;
-    fn full_shutdown(&mut self, set: bool) -> &mut Self;
+    fn full_shutdown(&mut self) -> &mut Self;
 }
 
 impl Extensions for AppT3D {
@@ -39,10 +69,10 @@ impl Extensions for AppT3D {
             .internal_add_workgroup(label, worker_type, threads);
         self
     }
-    fn full_shutdown(&mut self, set: bool) -> &mut Self {
+    fn full_shutdown(&mut self) -> &mut Self {
         let workgroup_handler = self.resources.get_mut::<WorkgroupHandler>().unwrap();
         for (_, workgroup) in workgroup_handler.workgroups.iter_mut() {
-            workgroup.shutdown.store(set, Ordering::Release);
+            workgroup.shutdown.store(true, Ordering::Release);
             for worker in workgroup.thread_pool.iter_mut() {
                 if let Some(worker) = worker.take() {
                     worker.thread().unpark();
@@ -57,10 +87,36 @@ impl Extensions for AppT3D {
         for (_, workgroup) in workgroup_handler.workgroups.iter_mut() {
             while workgroup.tasks.load(Ordering::Acquire) != 0 {
                 thread::park();
+                // for status in workgroup.statuses.iter() {
+                //     while !status.load(Ordering::Acquire) == 0 {
+                //         std::hint::spin_loop();
+                //     }
+                // }
             }
         }
         self
     }
+}
+
+thread_local! {
+    // The deque owned by this workgroup thread, so a task can queue its follow-up work locally
+    // instead of going back through the shared injector
+    static LOCAL_WORKER: Cell<(*const Injector<Task>, *const Worker<Task>)> =
+        const { Cell::new((std::ptr::null(), std::ptr::null())) };
+}
+
+// Queue work for `injector`'s workgroup. Called from a thread of that workgroup this pushes onto
+// the thread's own deque (uncontended, LIFO, stealable), otherwise onto the shared injector.
+#[inline]
+pub fn push_task(injector: &Injector<Task>, task: Task) {
+    LOCAL_WORKER.with(|local| {
+        let (owner, worker) = local.get();
+        if std::ptr::eq(owner, injector) {
+            unsafe { (*worker).push(task) }
+        } else {
+            injector.push(task)
+        }
+    })
 }
 
 enum WorkerStatus {
@@ -113,8 +169,8 @@ impl WorkgroupHandler {
             let shutdown_arc = Arc::clone(&shutdown);
             let main_thread_clo = main_thread.clone();
             thread_pool.push(
-                Some(std::thread::spawn(move || { worker_logic(injector_arc, worker, stealers_arc, statuses_arc, shutdown_arc, tasks_arc, main_thread_clo, group, id) })
-                ));
+                Some(std::thread::spawn(move || { worker_logic(injector_arc, worker, stealers_arc, statuses_arc, shutdown_arc, tasks_arc, main_thread_clo, id, group) }))
+            );
         }
         self.workgroups.insert(label.type_id(), Workgroup {
             thread_pool,
@@ -126,53 +182,80 @@ impl WorkgroupHandler {
     }
 }
 
-thread_local! {
-
-}
 fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<Vec<Stealer<Task>>>, statuses: Arc<[AtomicU8]>, shutdown: Arc<AtomicBool>, tasks: Arc<AtomicUsize>, main_thread: std::thread::Thread, id: usize, group: usize) {
+    LOCAL_WORKER.with(|local| local.set((Arc::as_ptr(&queue), &raw const worker)));
+    let mut rng = 0x2545_f491_4f6c_dd1d_u64 ^ ((group as u64) << 32) ^ (id as u64 + 1);
     loop {
         statuses[id].store(1, Ordering::Relaxed);
+        let mut tasks_done = 0;
         loop {
             //io::stdout().flush().unwrap();
             match worker.pop() {
-                Some(task) => { task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; },
+                Some(task) => {
+                    task.run();
+                    tasks_done +=1;
+                    continue;
+                },
                 None => {}
+            }
+            if tasks.load(Ordering::Acquire) == 0 {
+                break;
             }
             match queue.steal_batch_with_limit_and_pop(&worker, max(1, queue.len() / 2)) {
                 Steal::Success(task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; }
+                    task.run();
+                    tasks_done +=1;
+                    continue;
+                }
                 Steal::Retry => { continue; }
                 Steal::Empty => {}
             }
-            // Finding victims
-            let mut idx = rand::random_range(0..(stealers.len()));
-            for _ in 0..stealers.len() {
-                if !stealers[idx % stealers.len()].is_empty() {
-                    break;
-                }
-                idx += 1;
+            if tasks.load(Ordering::Acquire) == 0 {
+                break;
             }
-            let victim = &stealers[idx % stealers.len()];
-            match victim.steal_batch_with_limit_and_pop(&worker, max(1, victim.len() / 2)) {
-                Steal::Success( task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; dbg!["STEAL"];
-                },
-                Steal::Retry => { continue; },
-                Steal::Empty => {},
+            // Finding victims, starting from a random one so the threads don't all pile onto the
+            // same deque. Skips this thread's own deque and any victim that is already empty
+            rng ^= rng << 13;
+            rng ^= rng >> 17;
+            rng ^= rng << 5;
+            let start = rng as usize % stealers.len();
+            let mut retry = false;
+            for offset in 0..stealers.len() {
+                let idx = (start + offset) % stealers.len();
+                if idx == id || stealers[idx].is_empty() {
+                    continue;
+                }
+                let victim = &stealers[idx];
+                match victim.steal_batch_with_limit_and_pop(&worker, max(1, victim.len() / 2)) {
+                    Steal::Success( task ) => {
+                        task.run();
+                        tasks_done +=1;
+                        retry = true;
+                        break;
+                    },
+                    Steal::Retry => { retry = true; break; },
+                    Steal::Empty => {},
+                }
+            }
+            if retry {
+                continue;
             }
             break;
         }
-        if tasks.load(Ordering::Acquire) == 0 {
+
+        let prev = tasks.fetch_sub(tasks_done, Ordering::AcqRel);
+        if prev - tasks_done == 0 {
             if shutdown.load(Ordering::Relaxed) {
-                //println!("GROUP {group} THREAD {id} SHUTDOWN");
                 statuses[id].store(2, Ordering::Relaxed);
-                //io::stdout().flush().unwrap();
                 break;
             }
-            //println!("GROUP {group} THREAD {id} PARKED");
             statuses[id].store(0, Ordering::Relaxed);
-            main_thread.unpark();
+            if id == 0 {
+                main_thread.unpark();
+            }
             thread::park();
+        } else {
+            std::hint::spin_loop();
         }
     }
 }
