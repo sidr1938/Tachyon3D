@@ -2,14 +2,16 @@ use tachyon3d::*;
 
 
 mod tests {
-    use crate::{DependencyGraph, ResourceHandler};
-    use crate::{ Resource };
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::io;
+    use std::io::Write;
     use slotmap::{new_key_type};
-    use tachyon3d_internal::{DisjointedAccess};
-    use tachyon3d_internal::systems::destructure::SystemMethods;
-    use crate::{AppT3D, Plugin};
-    //use crate::hyper_fiber::ParallelScheduler;
+    use tachyon3d_internal::app::{AppT3D, Plugin};
+    use tachyon3d_internal::schedule::executors::Executor;
+    use tachyon3d_internal::schedule::executors::Executor::SingleThreaded;
+    use tachyon3d_internal::schedule::executors::multi::MultiThreadedExecutor;
+    use tachyon3d_internal::systems::variadics::SystemMethods;
+    use tachyon3d_internal::workgroups::{Extensions, Strategy, WorkgroupHandler};
+    use tachyon3d_proc_macros::Resource;
 
     #[test]
     fn test() {
@@ -54,16 +56,8 @@ mod tests {
             pub struct SystemNodeKey;
         }
 
-        fn jump() {
-            println!("Jump");
-        }
-
         let mut app = AppT3D::new();
-        struct UpdateScheduler {
-            pub systems: DependencyGraph,
-        }
 
-        use crate::InnerAccess;
         #[derive(Resource)]
         struct Dummy {
             value: u32
@@ -85,32 +79,57 @@ mod tests {
         // add a warning feature
         // add event queue
         struct MTS;
-        struct Quickstart;
+        struct BasicLoop;
+        struct ComputeTaskPool;
+        struct IoTaskPool;
+        struct SmallPool;
+        let usable_threads = std::thread::available_parallelism().unwrap().get() - 1;
         app
-            .add_plugin(Thing { tasks: vec![1; 100], })
-            .add_scheduler(Quickstart, Default::default())
-            .insert_res(Dummy {
+            // External plugins eg: Third party fps controller, first party stuff
+            .install(WorkgroupHandler::new())
+            // Internal plugins, 2nd party, converting to an installation just involves changing the trait
+            .add_plugins(Thing { tasks: vec![1; 100], })
+            // Note: The executor implementation depends on the workgroup handler installation
+            .add_schedule(BasicLoop, Executor::MultiThreaded(
+                // Let the compute task pool have 50% of the threads we get,
+                // IO gets 25%, and small pool gets 25%
+                MultiThreadedExecutor::new(ComputeTaskPool)
+            ))
+            .add_workgroup(ComputeTaskPool, Strategy::WorkSteal, 7)
+            // 0 threads still works it just doesnt spawn any threads or do anything, can be good as a load tester
+            // for other workgroups
+            .add_workgroup(IoTaskPool, Strategy::WorkSteal, 0)
+            //.add_workgroup(SmallPool, Strategy::WorkSteal, 2)
+            .add_resource(Dummy {
                 value: 4,
-            }).insert_res(Gummy {
+            })
+            .add_resource(Gummy {
             value: 2,
-            }).insert_res(Blah {
+            })
+            .add_resource(Blah {
             value: 2,
-            }).add_systems(Quickstart,
-                (
-                    (get_c, get_res), (get_f, get_f), (get_m, get_res).order(),
-                    ((get_c, get_c, (get_c, get_f, get_c)), get_c, get_res).order(),
-                ).order()
-            ).add_systems(Quickstart, (get_c,));
-        // let dot = app.schedulers.get_mut(Quickstart).unwrap().edges_to_dot();
-        // std::fs::write("graph.dot", dot).unwrap();
+            })
+            .add_systems(BasicLoop,
+                         (((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f)),
+                         ((get_c,get_res,get_res,get_res).order(), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f)),
+                         ((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f).order()),
+                         ((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f))).order()
+            );
 
-        app.schedulers.get_mut(Quickstart).unwrap().fetch_pointers(&mut app.resources);
-        for _ in 0..5 {
-            app.schedulers.get_mut(Quickstart).unwrap().run(&mut app.resources);
+
+        let dot = app.schedules.get_mut(BasicLoop).unwrap().edges_to_dot();
+        std::fs::write("graph.dot", dot).unwrap();
+
+        app.schedules.get_mut(BasicLoop).unwrap().cache_pointers(&mut app.resources);
+        for _ in 0..3 {
+            app.schedules.get_mut(BasicLoop).unwrap().run(&mut app.resources);
+            //std::thread::sleep(std::time::Duration::from_millis(100));
+            app.full_sync();
         }
-
+        app.full_shutdown(true);
 
         fn get_res(k: &Gummy, m: &mut Dummy) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
             //panic![];
             println!("res");
             // for i in 0..1 {
@@ -120,6 +139,7 @@ mod tests {
             //     std::println!("D {} {}", m.value, 2);
             //     m.value += 1;
             // }
+            //io::stdout().flush().unwrap();
         }
 
         fn get_k(k: &mut Gummy, m: &mut Dummy) {
@@ -130,6 +150,7 @@ mod tests {
             //     std::println!("D {} {}", m.value, 2);
             //     m.value += 1;
             // }
+            //io::stdout().flush().unwrap();
         }
 
         fn get_m(k: &mut Gummy, m: &mut Dummy) {
@@ -140,6 +161,7 @@ mod tests {
             //     std::println!("D {} {}", m.value, 2);
             //     m.value += 1;
             // }
+            //io::stdout().flush().unwrap();
         }
         fn get_f(k: &mut Gummy, m: &mut Dummy) {
             println!("f");
@@ -149,17 +171,19 @@ mod tests {
                 // std::println!("D {} {}", m.value, 2);
                 // m.value += 1;
             }
+            //io::stdout().flush().unwrap();
         }
 
         fn get_c(k: &mut Gummy, m: &mut Dummy) {
             println!("c");
-            std::println!("D {} {}", k.value, m.value);
+            //std::println!("D {} {}", k.value, m.value);
             // for i in 0..1 {
             //     let mut v = k.value;
             //     let c = k.value;
             //     std::println!("D {} {}", m.value, 2);
             //     m.value += 1;
             // }
+            //io::stdout().flush().unwrap();
         }
 
     }

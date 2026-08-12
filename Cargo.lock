@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "tachyon3d"
-version = "0.4.23"
+version = "0.0.1"
 dependencies = [
  "criterion",
  "slotmap",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "tachyon3d_internal"
-version = "0.2.23"
+version = "0.0.1"
 dependencies = [
  "corosensei",
  "crossbeam-deque",

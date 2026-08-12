@@ -1,10 +1,8 @@
 use std::ptr::addr_eq;
 use std::sync::atomic::{AtomicU32, Ordering};
-use crate::{DisjointedAccess, ResourceHandler, Schedule, ScheduleBuilder};
-
-pub trait ExecutorMethods {
-    fn execute(&mut self, schedule: &mut Schedule, resources: &mut ResourceHandler);
-}
+use crate::{ResourceHandler};
+use crate::resources::fetch::DisjointedAccess;
+use crate::schedule::Schedule;
 
 pub struct SingleThreadedExecutor;
 impl SingleThreadedExecutor {
@@ -36,7 +34,7 @@ impl SingleThreadedExecutor {
             let sys = schedule.systems.get_mut(*key).unwrap();
             // A system will typically have arguements, get_disjoint_unchecked is a custom method
             // that handles it for us to get the data we need to input into the system
-            // Just debug testing, not needed, everything is nominal if all systems run orderly.
+            // Just debug testing, not needed, everything is nominal if all schedule run orderly.
             // If you did what I did here using .rev() and putting the root after since queue is a .pop()
             // function (you can see the debug message go sequentially from 1v1 -> 2v1 -> 3v1...)
             // There is a bug if it is jumping around in a single threaded scheduler,
@@ -47,7 +45,7 @@ impl SingleThreadedExecutor {
             //     dbg![&key];
             // }
             // Deref it mutably so it can modify the state of our application
-            // We already built a cache, however if we want to add systems and dont want to build a cache
+            // We already built a cache, however if we want to add schedule and dont want to build a cache
             // for those we need to add this branch to check for those that dont have a cache installed yet
             if let Some(cache) = sys.cache.as_ref() {
                 (sys.system)(cache);
@@ -55,27 +53,27 @@ impl SingleThreadedExecutor {
                 // Added a cache builder that pre-runs this code, so we can avoid this entirely
                 // the cache works well if that resource isnt deleted or replaced, which is like 80% of cases
                 // if not, you have to rebuild the entire cache, later on ill improve this to only rebuild whats needed
-                // that way caches only have to be rebuilt for systems that have a resource that changed
-                let data = resources.internal.get_disjoint_unchecked(&sys.ptrs);
+                // that way caches only have to be rebuilt for schedule that have a resource that changed
+                let data = resources.internal.fetch_args_unchecked(&sys.ptrs);
                 (sys.system)(&data);
             }
             // Will review over this being a vector of default keys since this section is sort of
             // connected to the old algorithm, but technically there should only be one dependent pointer
             // at all times due to the new batching system
-            // ! Check out the dot format of your systems to see what I mean if you're confused !
+            // ! Check out the dot format of your schedule to see what I mean if you're confused !
             let next_node = schedule.dep_graph.edges.get(key).unwrap().dependents.iter();
             for i in next_node {
                 // The dependent (Eg: the next trigger node with its associates), will have
                 // a max gate that if the atomic count equals it that means all dependencies have ran.
                 // The other way would be where the dependent checks if the dependencies are finished,
                 // that would require polling and is much slower and unreliable
-                let max = schedule.systems.get_mut(*i).unwrap().dependency_count;
+                let max = schedule.systems.get(*i).unwrap().dependency_count;
                 let count = &mut schedule.systems.get_mut(*i).unwrap().dependency_gate;
                 // Add to the atomic count
-                count.fetch_add(1, Ordering::Relaxed);
+                let current = count.fetch_add(1, Ordering::Relaxed);
                 // Once the last node finishes (can be the root aswell) within the parallel block
                 // the gate is unlocked and the node pushes the next task upto the queue
-                if count.load(Ordering::Relaxed) == max {
+                if current + 1 == max {
                     // Push all of its associates, if any
                     for k in schedule.dep_graph.edges.get(i).unwrap().associates.iter().rev() {
                         queue.push(k);
@@ -90,20 +88,4 @@ impl SingleThreadedExecutor {
     }
 }
 
-pub struct MultiThreadedExecutor;
-impl MultiThreadedExecutor {
-    pub fn execute(&mut self, schedule: &mut Schedule, resources: &mut ResourceHandler) {
-        todo!()
-    }
-}
-pub enum Executor {
-    SingleThreaded { exe: SingleThreadedExecutor},
-    MultiThreaded { exe: MultiThreadedExecutor},
-    Custom { exe: Box<dyn ExecutorMethods> }
-}
 
-impl Default for Executor {
-    fn default() -> Self {
-        Executor::SingleThreaded { exe: SingleThreadedExecutor }
-    }
-}

@@ -1,6 +1,6 @@
 [package]
 name = "tachyon3d"
-version = "0.4.23"
+version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
 description = "A work in progress engine"
