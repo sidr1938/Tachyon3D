@@ -11,7 +11,7 @@ edition = "2024"
 fxhash = "*"
 corosensei = { version = "*", optional = true }
 crossbeam-deque = { version = "*" }
-tachyon3d_macros = { path = "../tachyon3d_macros" }
+tachyon3d_macros = { version = "0.0.1-alpha.1", path = "../tachyon3d_macros" }
 slotmap = "1.1.1"
 rand = "0.10.2"
 
