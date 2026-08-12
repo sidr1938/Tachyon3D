@@ -126,7 +126,7 @@ mod tests {
             //std::thread::sleep(std::time::Duration::from_millis(100));
             app.full_sync();
         }
-        app.full_shutdown(true);
+        app.full_shutdown();
 
         fn get_res(k: &Gummy, m: &mut Dummy) {
             std::thread::sleep(std::time::Duration::from_millis(10));
