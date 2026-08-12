@@ -54,7 +54,8 @@ impl SingleThreadedExecutor {
                 // the cache works well if that resource isnt deleted or replaced, which is like 80% of cases
                 // if not, you have to rebuild the entire cache, later on ill improve this to only rebuild whats needed
                 // that way caches only have to be rebuilt for schedule that have a resource that changed
-                let data = resources.internal.fetch_args_unchecked(&sys.ptrs);
+                let data = resources.internal.fetch_args(&sys.ptrs)
+                    .expect("SCHEDULE: System requests a missing resource or the same resource twice");
                 (sys.system)(&data);
             }
             // Will review over this being a vector of default keys since this section is sort of

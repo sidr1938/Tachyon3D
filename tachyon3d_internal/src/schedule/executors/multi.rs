@@ -35,7 +35,6 @@ impl MultiThreadedExecutor {
         }
 
         // Ready the threads
-        dbg!["UNPARKING"];
         let mut threads = 0;
 
         workgroup.tasks.fetch_add(schedule.systems.len(), Ordering::Release);
@@ -71,7 +70,8 @@ fn dispatch_system(queue_ptr: SendPointer<Arc<Injector<Task>>>, systems_ptr: Sen
             if let Some(cache) = entry.cache.as_ref() {
                 (entry.system)(cache);
             } else {
-                let data = resources_ptr.as_mut().internal.fetch_args_unchecked(&entry.ptrs);
+                let data = resources_ptr.as_mut().internal.fetch_args(&entry.ptrs)
+                    .expect("SCHEDULE: System requests a missing resource or the same resource twice");
                 (entry.system)(&data);
             }
             for dependent_node in dep_graph.edges.get(&node).unwrap().dependents.iter() {

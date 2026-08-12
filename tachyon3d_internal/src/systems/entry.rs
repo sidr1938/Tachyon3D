@@ -9,14 +9,22 @@ unsafe impl Sync for SystemEntry {}
 
 unsafe impl Send for SendSyncNonNull {}
 unsafe impl Sync for SendSyncNonNull {}
+// Send + Sync is asserted for this pointer, so it can only be built through an unsafe
+// constructor, a safe one would let any pointer be shared across threads from safe code
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct SendSyncNonNull {
-    pub non_null: NonNull<u8>
+    non_null: NonNull<u8>
 }
 impl SendSyncNonNull {
-    pub fn from(non_null: NonNull<u8>) -> Self {
+    /// # Safety
+    /// The pointee must be sound to access from any thread for as long as this wrapper is used,
+    /// which includes staying alive and not being aliased by a conflicting reference.
+    pub unsafe fn new(non_null: NonNull<u8>) -> Self {
         SendSyncNonNull { non_null }
+    }
+    pub fn as_ptr(&self) -> NonNull<u8> {
+        self.non_null
     }
 }
 pub struct SystemEntry {

@@ -4,7 +4,7 @@ pub mod macros;
 use std::any::{Any, TypeId};
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use crate::resources::access::Unwrap;
 use crate::schedule::{Schedule};
 use crate::schedule::graph::{NodeConnections, SystemKey};
@@ -127,7 +127,10 @@ pub enum OwnershipType {
 
 pub trait InnerAccess {
     const OWNERSHIP: (OwnershipType, TypeId);
-    fn fetch_data(pointer: NonNull<u8>) -> Self;
+    /// # Safety
+    /// The pointer must point at a live value of the accessed resource type and, for mutable
+    /// access, must not be aliased by any other reference for the lifetime of the result.
+    unsafe fn fetch_data(pointer: NonNull<u8>) -> Self;
 }
 
 
@@ -136,7 +139,7 @@ impl<T: Any + Unwrap + 'static > InnerAccess for &T {
     const OWNERSHIP: (OwnershipType, TypeId) = (OwnershipType::Ref, TypeId::of::<T::INNER>());
     // Called alot of times, best to inline this
     #[inline(always)]
-    fn fetch_data(pointer: NonNull<u8>) -> Self {
+    unsafe fn fetch_data(pointer: NonNull<u8>) -> Self {
         unsafe { return &*(pointer.as_ptr() as *const T) }
     }
 }
@@ -146,7 +149,7 @@ impl<T: Any + Unwrap + 'static> InnerAccess for &mut T {
     const OWNERSHIP: (OwnershipType, TypeId) = (OwnershipType::Mut, TypeId::of::<T::INNER>());
     // Same here
     #[inline(always)]
-    fn fetch_data(pointer: NonNull<u8>) -> Self {
+    unsafe fn fetch_data(pointer: NonNull<u8>) -> Self {
         unsafe { return &mut *(pointer.as_ptr() as *mut T) }
     }
 }

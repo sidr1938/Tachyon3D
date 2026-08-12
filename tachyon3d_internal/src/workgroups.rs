@@ -1,11 +1,13 @@
 use std::any::{Any, TypeId};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::time::Duration;
 use std::{io, thread};
 use std::cmp::{max, min};
 use std::io::Write;
 use std::thread::JoinHandle;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use crate::app::{AppT3D};
 use crate::app::plugin::Installation;
 use crossbeam_deque;
@@ -55,8 +57,10 @@ impl Extensions for AppT3D {
     fn full_sync(&mut self) -> &mut Self {
         let workgroup_handler = self.resources.get_mut::<WorkgroupHandler>().unwrap();
         for (_, workgroup) in workgroup_handler.workgroups.iter_mut() {
+            // A timeout is required, an unpark that lands before this thread parks would
+            // otherwise be lost and the sync would never complete
             while workgroup.tasks.load(Ordering::Acquire) != 0 {
-                thread::park();
+                thread::park_timeout(Duration::from_millis(1));
             }
         }
         self
@@ -113,7 +117,7 @@ impl WorkgroupHandler {
             let shutdown_arc = Arc::clone(&shutdown);
             let main_thread_clo = main_thread.clone();
             thread_pool.push(
-                Some(std::thread::spawn(move || { worker_logic(injector_arc, worker, stealers_arc, statuses_arc, shutdown_arc, tasks_arc, main_thread_clo, group, id) })
+                Some(std::thread::spawn(move || { worker_logic(injector_arc, worker, stealers_arc, statuses_arc, shutdown_arc, tasks_arc, main_thread_clo, id, group) })
                 ));
         }
         self.workgroups.insert(label.type_id(), Workgroup {
@@ -129,18 +133,25 @@ impl WorkgroupHandler {
 thread_local! {
 
 }
+// A task that panics must still be counted as finished, otherwise the task counter never
+// reaches zero and every following sync or shutdown blocks forever
+fn run_task(task: Task, tasks: &AtomicUsize) {
+    let _ = catch_unwind(AssertUnwindSafe(move || task.0()));
+    tasks.fetch_sub(1, Ordering::Relaxed);
+}
+
 fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<Vec<Stealer<Task>>>, statuses: Arc<[AtomicU8]>, shutdown: Arc<AtomicBool>, tasks: Arc<AtomicUsize>, main_thread: std::thread::Thread, id: usize, group: usize) {
     loop {
         statuses[id].store(1, Ordering::Relaxed);
         loop {
             //io::stdout().flush().unwrap();
             match worker.pop() {
-                Some(task) => { task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; },
+                Some(task) => { run_task(task, &tasks); continue; },
                 None => {}
             }
             match queue.steal_batch_with_limit_and_pop(&worker, max(1, queue.len() / 2)) {
                 Steal::Success(task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; }
+                    run_task(task, &tasks); continue; }
                 Steal::Retry => { continue; }
                 Steal::Empty => {}
             }
@@ -155,7 +166,7 @@ fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<
             let victim = &stealers[idx % stealers.len()];
             match victim.steal_batch_with_limit_and_pop(&worker, max(1, victim.len() / 2)) {
                 Steal::Success( task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; dbg!["STEAL"];
+                    run_task(task, &tasks); continue;
                 },
                 Steal::Retry => { continue; },
                 Steal::Empty => {},
