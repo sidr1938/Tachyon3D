@@ -1,4 +1,4 @@
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use slotmap::new_key_type;
 
 new_key_type! {

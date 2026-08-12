@@ -46,10 +46,16 @@ impl<T> SendPointer<T> {
         }
     }
 
+    /// # Safety
+    /// The pointee must outlive every use of the returned reference and must not be aliased by
+    /// any other reference while it is alive.
     pub unsafe fn as_mut(&self) -> &'static mut T {
-        &mut *self.inner.as_ptr()
+        unsafe { &mut *self.inner.as_ptr() }
     }
+    /// # Safety
+    /// The pointee must outlive every use of the returned reference and must not be mutably
+    /// aliased while it is alive.
     pub unsafe fn as_ref(&self) -> &'static T {
-        &*self.inner.as_ptr()
+        unsafe { &*self.inner.as_ptr() }
     }
 }

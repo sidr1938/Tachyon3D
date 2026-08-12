@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 use std::thread::{JoinHandle, ScopedJoinHandle};
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use tachyon3d_internal::app::plugin::Installation;
 use crate::{Resource, ResourceHandler};
 pub use crate::app::plugin::{Plugin, RunAsOwned};

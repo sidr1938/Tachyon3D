@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
 use std::ptr::NonNull;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use crate::systems::entry::SendSyncNonNull;
 use crate::systems::variadics::OwnershipType;
 // UNSAFE STUFF AND RAW POINTER SHIT
@@ -9,7 +9,11 @@ use crate::systems::variadics::OwnershipType;
 
 pub trait DisjointedAccess {
     fn fetch_args(&mut self, key_pointers: &Vec<(OwnershipType, TypeId)>) -> Option<Vec<SendSyncNonNull>>;
-    fn fetch_args_unchecked(&mut self, key_pointers: &Vec<(OwnershipType, TypeId)>) -> Vec<SendSyncNonNull>;
+    /// # Safety
+    /// Every key must be present in the map and no key may appear twice, otherwise the returned
+    /// pointers alias or dangle. The pointers stay valid only until the map is mutated in a way
+    /// that moves or drops the resources they point at.
+    unsafe fn fetch_args_unchecked(&mut self, key_pointers: &Vec<(OwnershipType, TypeId)>) -> Vec<SendSyncNonNull>;
 }
 
 impl DisjointedAccess for FxHashMap<TypeId, Box<dyn Any>> {
@@ -26,23 +30,23 @@ impl DisjointedAccess for FxHashMap<TypeId, Box<dyn Any>> {
                 return None
             }
         }
-        Some(self.fetch_args_unchecked(key_pointers))
+        // The keys were just validated as present and disjoint
+        Some(unsafe { self.fetch_args_unchecked(key_pointers) })
     }
     // Good to use after you've confirmed your schedule are valid
-    fn fetch_args_unchecked(&mut self, key_pointers: &Vec<(OwnershipType, TypeId)>) -> Vec<SendSyncNonNull> {
+    unsafe fn fetch_args_unchecked(&mut self, key_pointers: &Vec<(OwnershipType, TypeId)>) -> Vec<SendSyncNonNull> {
         let mut data = Vec::new();
-        let mut thread_safe = true;
         // Remove owned values beforehand because the memory location is affected
         for (ownership, key) in key_pointers {
             match ownership {
                 OwnershipType::Mut => unsafe {
-                    let resource = SendSyncNonNull::from(
+                    let resource = SendSyncNonNull::new(
                         NonNull::new_unchecked(self.get_mut(key).unwrap().as_mut() as *mut dyn Any as *mut u8)
                     );
                     data.push(resource)
                 }
                 OwnershipType::Ref => unsafe {
-                    let resource = SendSyncNonNull::from(
+                    let resource = SendSyncNonNull::new(
                         NonNull::new_unchecked(self.get(key).unwrap().as_ref() as *const dyn Any as *mut u8)
                     );
                     data.push(resource)

@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
 use std::ops::DerefMut;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use slotmap::{DenseSlotMap, new_key_type};
 use crate::{ResourceHandler};
 use crate::resources::fetch::DisjointedAccess;
@@ -60,9 +60,12 @@ impl Schedule {
         }
         self.executor = exec;
     }
+    // The cache holds raw pointers into the resource map, so it has to be rebuilt whenever a
+    // resource is inserted, replaced or removed
     pub fn cache_pointers(&mut self, resources: &mut ResourceHandler) {
         for (key, entry) in self.systems.iter_mut() {
-            let data = resources.internal.fetch_args_unchecked(&entry.ptrs);
+            let data = resources.internal.fetch_args(&entry.ptrs)
+                .expect("SCHEDULE: System requests a missing resource or the same resource twice");
             entry.cache = Some(data);
         }
     }

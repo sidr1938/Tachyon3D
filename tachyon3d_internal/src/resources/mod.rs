@@ -1,5 +1,5 @@
 use std::any::{Any, TypeId};
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 pub mod access;
 pub mod fetch;
 

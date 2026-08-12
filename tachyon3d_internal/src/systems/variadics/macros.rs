@@ -4,7 +4,7 @@ use crate::systems::variadics::Sequence;
 use std::any::{Any, TypeId};
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use super::SystemKey;
 use crate::schedule::{Schedule};
 use crate::schedule::graph::NodeConnections;
@@ -88,9 +88,13 @@ macro_rules! parse_tuple_current_rank {
                         label: None,
                         system: Box::new(move | mut pointers: &[SendSyncNonNull] | {
                             let mut arg = pointers.iter().copied();
-                            self(
-                                $(<$y as InnerAccess>::fetch_data(arg.next().expect("Missing Arguement").non_null)),*
-                            );
+                            // The executor is responsible for handing over pointers that are
+                            // live, correctly typed and disjoint for the mutable arguments
+                            unsafe {
+                                self(
+                                    $(<$y as InnerAccess>::fetch_data(arg.next().expect("Missing Arguement").as_ptr())),*
+                                );
+                            }
                         }),
                         ptrs,
                         cache: None,
