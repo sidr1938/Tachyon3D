@@ -2,6 +2,8 @@
 name = "tachyon3d_dylib"
 version = "0.0.1-alpha.1"
 edition = "2024"
+license = "Apache-2.0"
+description = "dynamic linker for tachyon3d"
 
 [lib]
 crate-type = ["dylib"]

@@ -3,7 +3,7 @@ name = "tachyon3d"
 version = "0.0.1-alpha.1"
 edition = "2024"
 license = "Apache-2.0"
-description = "A work in progress engine"
+description = "A work in progress engine, i almost have the basic functionality out and i can release simple docs soon"
 
 [dependencies]
 tachyon3d_internal = { version = "0.0.1-alpha.1", path = "tachyon3d_internal" }
