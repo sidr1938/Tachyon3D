@@ -21,7 +21,7 @@ members = ["tachyon3d_dylib","tachyon3d_internal", "tachyon3d_macros"]
 resolver = "3"
 
 [dev-dependencies]
-criterion = { version = "*", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "scheduler_bench"
