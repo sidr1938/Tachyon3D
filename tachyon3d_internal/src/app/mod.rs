@@ -32,6 +32,10 @@ impl AppT3D {
             },
         }
     }
+    pub fn run<T: 'static>(&mut self, label: T) -> &mut Self {
+        self.schedules.internal.get_mut(&label.type_id()).unwrap().run(&mut self.resources);
+        self
+    }
     // Not really a full 'ecs' system and not sure if i want to go with an integrated ecs
     pub fn add_systems<T: 'static, U>(&mut self, schedule: T, systems: impl Destructure<U>) -> &mut Self {
         let scheduler = self.schedules.internal.get_mut(&schedule.type_id()).expect("No schedular exists");
@@ -40,6 +44,10 @@ impl AppT3D {
     }
     pub fn add_schedule<T: 'static>(&mut self, label: T, executor: Executor) -> &mut Self {
         self.schedules.internal.insert(label.type_id(), Schedule::new(Some(executor)));
+        self
+    }
+    pub fn cache_inputs<T: 'static>(&mut self, label: T) -> &mut Self {
+        self.schedules.internal.get_mut(&label.type_id()).unwrap().cache_pointers(&mut self.resources);
         self
     }
     // External functionality just like how bevy does it

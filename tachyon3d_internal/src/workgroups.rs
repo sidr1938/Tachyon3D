@@ -10,6 +10,7 @@ use crate::app::{AppT3D};
 use crate::app::plugin::Installation;
 use crossbeam_deque;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
+use crate::ecs::{ECSPlugin};
 
 pub struct Task(pub Box<dyn FnOnce() + Send>);
 // T3D Default workgroup plugin
@@ -24,13 +25,23 @@ pub enum Strategy {
     FiberWorkSteal,
     AsyncWorkSteal,
 }
+pub struct WorkgroupPlugin;
+
+impl Installation for WorkgroupPlugin {
+    fn install_plugin(self, app: &mut AppT3D)
+    where
+        Self: Sized,
+    {
+        eprintln!["* [INFO]: Installing Workgroups"];
+        app.install(WorkgroupHandler::new());
+    }
+}
 
 impl Installation for WorkgroupHandler {}
-
 pub trait Extensions {
     fn add_workgroup<T: 'static>(&mut self, label: T, worker_type: Strategy, threads: usize) -> &mut Self;
     fn full_sync(&mut self) -> &mut Self;
-    fn full_shutdown(&mut self, set: bool) -> &mut Self;
+    fn full_shutdown(&mut self) -> &mut Self;
 }
 
 impl Extensions for AppT3D {
@@ -39,10 +50,10 @@ impl Extensions for AppT3D {
             .internal_add_workgroup(label, worker_type, threads);
         self
     }
-    fn full_shutdown(&mut self, set: bool) -> &mut Self {
+    fn full_shutdown(&mut self) -> &mut Self {
         let workgroup_handler = self.resources.get_mut::<WorkgroupHandler>().unwrap();
         for (_, workgroup) in workgroup_handler.workgroups.iter_mut() {
-            workgroup.shutdown.store(set, Ordering::Release);
+            workgroup.shutdown.store(true, Ordering::Release);
             for worker in workgroup.thread_pool.iter_mut() {
                 if let Some(worker) = worker.take() {
                     worker.thread().unpark();
@@ -57,6 +68,11 @@ impl Extensions for AppT3D {
         for (_, workgroup) in workgroup_handler.workgroups.iter_mut() {
             while workgroup.tasks.load(Ordering::Acquire) != 0 {
                 thread::park();
+                // for status in workgroup.statuses.iter() {
+                //     while !status.load(Ordering::Acquire) == 0 {
+                //         std::hint::spin_loop();
+                //     }
+                // }
             }
         }
         self
@@ -106,6 +122,7 @@ impl WorkgroupHandler {
         let main_thread = std::thread::current();
         for (id, worker) in workers.into_iter().enumerate() {
             // ARC Shares
+            // maybe arc clone a struct of everything?
             let injector_arc = Arc::clone(&injector);
             let statuses_arc = Arc::clone(&statuses);
             let stealers_arc = Arc::clone(&stealers);
@@ -113,8 +130,8 @@ impl WorkgroupHandler {
             let shutdown_arc = Arc::clone(&shutdown);
             let main_thread_clo = main_thread.clone();
             thread_pool.push(
-                Some(std::thread::spawn(move || { worker_logic(injector_arc, worker, stealers_arc, statuses_arc, shutdown_arc, tasks_arc, main_thread_clo, group, id) })
-                ));
+                Some(std::thread::spawn(move || { worker_logic(injector_arc, worker, stealers_arc, statuses_arc, shutdown_arc, tasks_arc, main_thread_clo, group, id) }))
+            );
         }
         self.workgroups.insert(label.type_id(), Workgroup {
             thread_pool,
@@ -126,23 +143,31 @@ impl WorkgroupHandler {
     }
 }
 
-thread_local! {
-
-}
-fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<Vec<Stealer<Task>>>, statuses: Arc<[AtomicU8]>, shutdown: Arc<AtomicBool>, tasks: Arc<AtomicUsize>, main_thread: std::thread::Thread, id: usize, group: usize) {
+fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<Vec<Stealer<Task>>>, statuses: Arc<[AtomicU8]>, shutdown: Arc<AtomicBool>, tasks: Arc<AtomicUsize>, main_thread: std::thread::Thread, group: usize, id: usize) {
     loop {
         statuses[id].store(1, Ordering::Relaxed);
+        let mut tasks_done = 0;
         loop {
             //io::stdout().flush().unwrap();
             match worker.pop() {
-                Some(task) => { task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; },
+                Some(task) => {
+                    task.0();
+                    tasks_done +=1;
+                    continue;
+                },
                 None => {}
             }
             match queue.steal_batch_with_limit_and_pop(&worker, max(1, queue.len() / 2)) {
                 Steal::Success(task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; }
+                    task.0();
+                    tasks_done +=1;
+                    continue;
+                }
                 Steal::Retry => { continue; }
                 Steal::Empty => {}
+            }
+            if tasks.load(Ordering::Acquire) == 0 {
+                break;
             }
             // Finding victims
             let mut idx = rand::random_range(0..(stealers.len()));
@@ -154,25 +179,31 @@ fn worker_logic(queue: Arc<Injector<Task>>, worker: Worker<Task>, stealers: Arc<
             }
             let victim = &stealers[idx % stealers.len()];
             match victim.steal_batch_with_limit_and_pop(&worker, max(1, victim.len() / 2)) {
-                Steal::Success( task) => {
-                    task.0(); tasks.fetch_sub(1, Ordering::Relaxed); continue; dbg!["STEAL"];
+                Steal::Success( task ) => {
+                    task.0();
+                    tasks_done +=1;
+                    continue;
                 },
                 Steal::Retry => { continue; },
                 Steal::Empty => {},
             }
             break;
         }
-        if tasks.load(Ordering::Acquire) == 0 {
+
+        let prev = tasks.fetch_sub(tasks_done, Ordering::AcqRel);
+        if prev - tasks_done == 0 {
             if shutdown.load(Ordering::Relaxed) {
-                //println!("GROUP {group} THREAD {id} SHUTDOWN");
                 statuses[id].store(2, Ordering::Relaxed);
-                //io::stdout().flush().unwrap();
                 break;
             }
-            //println!("GROUP {group} THREAD {id} PARKED");
             statuses[id].store(0, Ordering::Relaxed);
+            // if id == 0 {
+            //
+            // }
             main_thread.unpark();
             thread::park();
+        } else {
+            std::hint::spin_loop();
         }
     }
 }

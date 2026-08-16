@@ -12,6 +12,7 @@ pub mod schedule;
 pub mod app;
 pub mod systems;
 pub mod workgroups;
+pub mod ecs;
 // Notes //
 
 /*

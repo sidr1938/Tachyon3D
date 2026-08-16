@@ -1,3 +1,5 @@
+mod basic_quick_0;
+
 use tachyon3d::*;
 
 
@@ -88,7 +90,7 @@ mod tests {
             // External plugins eg: Third party fps controller, first party stuff
             .install(WorkgroupHandler::new())
             // Internal plugins, 2nd party, converting to an installation just involves changing the trait
-            .add_plugins(Thing { tasks: vec![1; 100], })
+            //.add_plugins(Thing { tasks: vec![1; 100], })
             // Note: The executor implementation depends on the workgroup handler installation
             .add_schedule(BasicLoop, Executor::MultiThreaded(
                 // Let the compute task pool have 50% of the threads we get,
@@ -109,12 +111,13 @@ mod tests {
             .add_resource(Blah {
             value: 2,
             })
-            .add_systems(BasicLoop,
-                         (((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f)),
-                         ((get_c,get_res,get_res,get_res).order(), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f)),
-                         ((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f).order()),
-                         ((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f))).order()
-            );
+            // .add_systems(BasicLoop,
+            //              (((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f)),
+            //              ((get_c,get_res,get_res,get_res).order(), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f)),
+            //              ((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f).order()),
+            //              ((get_c,get_res,get_res,get_res), (get_res), (get_f, get_res, get_res, get_res, get_f, get_f))).order()
+            //)
+        .add_systems(BasicLoop, get_c);
 
 
         let dot = app.schedules.get_mut(BasicLoop).unwrap().edges_to_dot();
@@ -126,7 +129,7 @@ mod tests {
             //std::thread::sleep(std::time::Duration::from_millis(100));
             app.full_sync();
         }
-        app.full_shutdown(true);
+        app.full_shutdown();
 
         fn get_res(k: &Gummy, m: &mut Dummy) {
             std::thread::sleep(std::time::Duration::from_millis(10));

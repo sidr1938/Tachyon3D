@@ -33,12 +33,9 @@ impl MultiThreadedExecutor {
         for associate in schedule.dep_graph.edges.get(&root).unwrap().associates.iter() {
             dispatch_system(queue_ptr, system_ptr, schedule_ptr, resource_ptr, *associate);
         }
-
         // Ready the threads
-        dbg!["UNPARKING"];
         let mut threads = 0;
-
-        workgroup.tasks.fetch_add(schedule.systems.len(), Ordering::Release);
+        workgroup.tasks.fetch_add(schedule.systems.len(), Ordering::Relaxed);
         for (idx, worker) in workgroup.thread_pool.iter_mut().enumerate() {
             if threads == schedule.systems.len() {
                 break;
@@ -61,7 +58,9 @@ impl MultiThreadedExecutor {
 
 fn dispatch_system(queue_ptr: SendPointer<Arc<Injector<Task>>>, systems_ptr: SendPointer<DenseSlotMap<SystemKey, SystemEntry>>, dep_graph_ptr: SendPointer<DependencyGraph>, resources_ptr: SendPointer<ResourceHandler>, node: SystemKey) {
     unsafe {
-        queue_ptr.as_ref().push(Task(Box::new(move || {
+        queue_ptr.as_ref().push(
+
+            Task(Box::new(move || {
             // The multithreaded version of the single threaded systems dispatcher
             // Pointer initialize for pointers converted more than once
             let systems = systems_ptr.as_mut();
@@ -86,7 +85,9 @@ fn dispatch_system(queue_ptr: SendPointer<Arc<Injector<Task>>>, systems_ptr: Sen
                     count.store(0, Ordering::Release);
                 }
             }
-        })));
+        }))
+
+        );
     }
 
 }
